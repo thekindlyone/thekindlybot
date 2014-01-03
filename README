@@ -1,7 +1,7 @@
 thekindlybot
 ============
 
-This is a xmpp chatbot(sleekxmpp) that searches for and shares music via beets and smtp.
+This is a python xmpp chatbot(sleekxmpp) that searches for and shares music via beets and smtp.
 It also plays hangman and a philosophy(random feature  for a friend) quiz with contacts.
 Allows contacts to search music in local library using beets music organizer and sends music to contacts via smtp on command
 
