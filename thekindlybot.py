@@ -15,6 +15,8 @@ import pickle
 import string
 from random import choice
 from time import time
+import unidecode
+import sys
 from ConfigParser import SafeConfigParser
 # Mail Thread
 def sendmail(fn,to,activeflag,xmobj,recipient,botaddress,pw,smtp_server):
@@ -32,7 +34,8 @@ def sendmail(fn,to,activeflag,xmobj,recipient,botaddress,pw,smtp_server):
     
     
     fp=open(filename,'rb')
-    att = email.mime.application.MIMEApplication(fp.read(),_subtype="mp3")
+    #att = email.mime.application.MIMEApplication(fp.read(),_subtype="mp3")
+    att = email.mime.application.MIMEApplication(fp.read())
     fp.close()
     att.add_header('Content-Disposition','attachment',filename=filename)
     msg.attach(att)
@@ -43,6 +46,7 @@ def sendmail(fn,to,activeflag,xmobj,recipient,botaddress,pw,smtp_server):
     s.quit()
     activeflag.value=0
     xmobj.send_message(recipient, mbody='Mail Sent!')
+    print 'mail sent! to ',recipient
     thread.exit()
 
 #hangman work
@@ -133,23 +137,27 @@ class vplayer(object):
         self.answer=''
         self.done=[]
         self.tried=[]
+        self.creationtime=time()
         
     def reset(self):
         self.question,self.answer=self.fetchquestion()
-        
+        self.lastaction=time()
         self.tried=[]
         self.done=['']
     
     def fetchquestion(self):
+        self.lastaction=time()
         qbank=pickle.load(open(r'philobank.p','r'))
         q=choice(qbank.keys())
         a=qbank[q]
         return q,a.lower()
     
     def getstat(self):
+        self.lastaction=time()
         return 'name = '+self.name+' question= '+self.question+' answer ='+self.answer+' tried list='+str(self.tried)+' done list='+str(self.done)
     
     def displaytext(self):
+        self.lastaction=time()
         rs=''
         for i in range(len(self.answer)):
             if self.answer[i] in self.done : rs=rs+self.answer[i]
@@ -167,7 +175,7 @@ class vgame(object):
         self.playertable={}
     
     def register_player(self,newplayer):
-        self.playertable[newplayer]=player(newplayer)        
+        self.playertable[newplayer]=vplayer(newplayer)        
     def delete_player(self,playername):
         self.playertable.pop(playername,None)
         return 'Quiz session ended!'
@@ -203,7 +211,11 @@ class vgame(object):
                 
         else: response='WTF?'
         return response
-
+    
+    def cleanup(self):
+        for n in self.playertable:
+            if (self.playertable[n].lastaction-self.playertable[n].creationtime)>(30*60):
+                self.delete_player(n) 
 
 
 
@@ -223,12 +235,14 @@ class EchoBot(ClientXMPP):
         self.artists=pickle.load(open(r'artists.dat'))
         self.hangman=game()
         self.philo=vgame()
-
+        self.links=open(r'links.txt').read().split('\n')
         self.add_event_handler("session_start", self.session_start)
         self.add_event_handler("message", self.message)
 
     def session_start(self, event):
         self.send_presence(pstatus="Hello, I am a chat bot. I like distributing music and playing Hangman. Type 'help' for help.")
+        print 'Session started'
+        
         self.get_roster()
     
 
@@ -239,7 +253,7 @@ class EchoBot(ClientXMPP):
             f="%(from)s"%msg
             q="%(body)s"%msg
             q=string.lower(q)
-            print '\n\n'+q
+            print '\n************************\n',f,'says: ',q
             pt=self.hangman.playertable
             ppt=self.philo.playertable
             if (f not in pt)and q !='help' and (f not in ppt):
@@ -280,7 +294,7 @@ If you still can't find the track, then most likely I don't have it.'''
                         reply='UNRECOGNIZED COMMAND.\nTYPE help for help.'
                 
                 # EMAIL
-                if re.match('@.+?#\d$',q):
+                if re.match('@.+?#\d+$',q):
                     if re.match('.+?@gmail.com$',f[:f.rfind('/')]):
                         
                         if self.active.value==0:
@@ -295,7 +309,7 @@ If you still can't find the track, then most likely I don't have it.'''
                             if size<24:
                                 reply='\n'+'Mailing...'+fl[fl.rfind('\\')+1:]+' File size = '+str(size)+'MB'
                                 rec="%(from)s"%msg
-                                thread.start_new_thread(sendmail,(fl,f[:f.rfind('/')],self.active,self,rec,self.mymail,self.mymailpw,self.smtp_server))
+                                thread.start_new_thread(sendmail,(fl,f[:f.rfind('/')],self.active,self,rec))
                             else:
                                 reply='File larger than 25MB, cannot send. This is a limitation of google smtp server. Take it up with them.'
                         else:
@@ -337,26 +351,42 @@ if your email id is xyz@gmail.com and you want the 3rd result of search query 'r
                     else:
                         reply='/me mail server busy.'
                         
-                if q=='#start hangman'.strip() or q=='# start hangman'.strip():
+                if q=='#start hangman' or q=='# start hangman':
                     self.hangman.cleanup()
                     self.hangman.register_player(f)
                     reply=self.hangman.startgame(f)
+                if q=='#start quiz'or q=='# start quiz':
+                    self.philo.cleanup()
+                    self.philo.register_player(f)
+                    reply=self.philo.startgame(f)
             else:            
-                if(f in pt) and q!='help':
-                    if q=='#stop hangman'.strip() or q=='# stop hangman'.strip(): 
+                if(f in pt) and q!='help' and (f not in ppt):
+                    if q=='#stop hangman' or q=='# stop hangman': 
                         reply=self.hangman.delete_player(f)
                     else:    
-                        if q=='#start hangman'.strip() or q=='# start hangman'.strip():
+                        if q=='#start hangman' or q=='# start hangman':
                             r1='Old '+self.hangman.delete_player(f)+'\n'
                             self.hangman.register_player(f)
                             r2=self.hangman.startgame(f)
                             reply=r1+r2
                         else: 
                             reply=self.hangman.gameresponse(q,f)
+                if(f not in pt) and q!='help' and (f in ppt):
+                    if q=='#stop quiz' or q=='# stop quiz':
+                        reply=self.philo.delete_player(f)
+                    else:
+                        if q=='#start quiz' or q=='# start quiz':
+                            r1='Old '+self.philo.delete_player(f)+'\n'
+                            self.philo.register_player(f)
+                            r2=self.philo.startgame(f)
+                            reply=r1+r2
+                        else:
+                            reply=self.philo.gameresponse(q,f)
+            
             #help
             if q=='help':
                 
-                custom='5. Philo quiz -> start quiz by typing #start quiz\nstop quiz by typing #stop quiz\nIf you want question repeated type #repeat while in quiz session'
+                custom='6. Philo quiz -> start quiz by typing #start quiz\nstop quiz by typing #stop quiz\nIf you want question repeated type #repeat while in quiz session'
                 
                 reply="""\n1. this service queries music on my library. \nExample: to search for led zeppelin's no quarter, type \n$ led zeppelin no quarter 
 *The search feature accepts artists, tracknames, album names and combination of these fields.*
@@ -379,11 +409,18 @@ list artists
 note: No other commands will work while in hangman session except _help_ .
 To exit hangman session type
 #stop hangman
+5.For a random interesting link, type 
+#random
 """+custom
+            if q==':(':
+                reply='/me hugs you'
+           
+            if q=='#random'or q=='# random':
+                reply=choice(open(r'links.txt').read().split('\n'))
             msg.reply(reply).send()
             print '\n\n'
-            print msg
-            print'\n\n'
+            print 'Reply=',reply
+            print'\n\n**************************'
 
             
                 
@@ -397,7 +434,8 @@ if __name__ == '__main__':
     emid=parser.get('credentials','emailid')
     pw=parser.get('credentials','password')
     smtp_server=parser.get('credentials','smtpserver')
-    
+    xmpp_server=parser.get('credentials','xmppserver')
+    port=int(parser.get('credentials','port'))
     xmpp = EchoBot(emid, pw, smtp_server)
-    xmpp.connect(('talk.google.com', 5222))
+    xmpp.connect((xmpp_server, port))
     xmpp.process(block=True)
